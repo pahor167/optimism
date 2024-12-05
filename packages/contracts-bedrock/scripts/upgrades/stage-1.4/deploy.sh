@@ -9,6 +9,7 @@ export $(grep -v '^#' .env | xargs)
 
 reqenv "ETH_RPC_URL"
 reqenv "DEPLOY_CONFIG_PATH"
+reqenv "DELAYED_WETH_IMPL"
 reqenv "PRIVATE_KEY"
 reqenv "KONA_PRESTATE"
 reqenv "ASTERISC_KONA_GAME_TYPE"
@@ -53,6 +54,7 @@ DELAYED_WETH_PROXY_ADDR="$(capture_output "$OP_DEPLOYER" \
   bootstrap delayedweth \
   --artifacts-locator "tag://op-contracts/v1.9.0-rc.3" \
   --l1-rpc-url "$L1_RPC_URL" \
+  --delayed-weth-impl "$DELAYED_WETH_IMPL" \
   --private-key "$PRIVATE_KEY" | sed -n '/^{/,/^}$/p' | jq -r '.DelayedWethProxy')"
 echo "✨ Deployed DelayedWETHProxy @ $DELAYED_WETH_PROXY_ADDR"
 

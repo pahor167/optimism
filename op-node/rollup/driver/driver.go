@@ -6,6 +6,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
 
+	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/async"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/attributes"
@@ -16,10 +17,10 @@ import (
 	"github.com/ethereum-optimism/optimism/op-node/rollup/engine"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/event"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/finality"
+	"github.com/ethereum-optimism/optimism/op-node/rollup/interop"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/sequencing"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/status"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/sync"
-	plasma "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
 
@@ -105,13 +106,13 @@ type Finalizer interface {
 	event.Deriver
 }
 
-type PlasmaIface interface {
-	// Notify L1 finalized head so plasma finality is always behind L1
+type AltDAIface interface {
+	// Notify L1 finalized head so AltDA finality is always behind L1
 	Finalize(ref eth.L1BlockRef)
 	// Set the engine finalization signal callback
-	OnFinalizedHeadSignal(f plasma.HeadSignalFn)
+	OnFinalizedHeadSignal(f altda.HeadSignalFn)
 
-	derive.PlasmaInputFetcher
+	derive.AltDAInputFetcher
 }
 
 type SyncStatusTracker interface {
@@ -149,12 +150,19 @@ type SequencerStateListener interface {
 	SequencerStopped() error
 }
 
+type Drain interface {
+	Drain() error
+}
+
 // NewDriver composes an events handler that tracks L1 state, triggers L2 Derivation, and optionally sequences new L2 blocks.
 func NewDriver(
+	sys event.Registry,
+	drain Drain,
 	driverCfg *Config,
 	cfg *rollup.Config,
 	l2 L2Chain,
 	l1 L1Chain,
+	supervisor interop.InteropBackend, // may be nil pre-interop.
 	l1Blobs derive.L1BlobsFetcher,
 	altSync AltSync,
 	network Network,
@@ -164,27 +172,27 @@ func NewDriver(
 	safeHeadListener rollup.SafeHeadListener,
 	syncCfg *sync.Config,
 	sequencerConductor conductor.SequencerConductor,
-	plasma PlasmaIface,
+	altDA AltDAIface,
 ) *Driver {
 	driverCtx, driverCancel := context.WithCancel(context.Background())
 
-	var executor event.Executor
-	var drain func() error
-	// This instantiation will be one of more options: soon there will be a parallel events executor
-	{
-		s := event.NewGlobalSynchronous(driverCtx)
-		executor = s
-		drain = s.Drain
-	}
-	sys := event.NewSystem(log, executor)
-	sys.AddTracer(event.NewMetricsTracer(metrics))
-
 	opts := event.DefaultRegisterOpts()
+
+	// If interop is scheduled we start the driver.
+	// It will then be ready to pick up verification work
+	// as soon as we reach the upgrade time (if the upgrade is not already active).
+	if cfg.InteropTime != nil {
+		interopDeriver := interop.NewInteropDeriver(log, cfg, driverCtx, supervisor, l2)
+		sys.Register("interop", interopDeriver, opts)
+	}
 
 	statusTracker := status.NewStatusTracker(log, metrics)
 	sys.Register("status", statusTracker, opts)
 
-	l1 = NewMeteredL1Fetcher(l1, metrics)
+	l1Tracker := status.NewL1Tracker(l1)
+	sys.Register("l1-blocks", l1Tracker, opts)
+
+	l1 = NewMeteredL1Fetcher(l1Tracker, metrics)
 	verifConfDepth := confdepth.NewConfDepth(driverCfg.VerifierConfDepth, statusTracker.L1Head, l1)
 
 	ec := engine.NewEngineController(l2, log, metrics, cfg, syncCfg,
@@ -197,8 +205,8 @@ func NewDriver(
 	sys.Register("cl-sync", clSync, opts)
 
 	var finalizer Finalizer
-	if cfg.PlasmaEnabled() {
-		finalizer = finality.NewPlasmaFinalizer(driverCtx, log, cfg, l1, plasma)
+	if cfg.AltDAEnabled() {
+		finalizer = finality.NewAltDAFinalizer(driverCtx, log, cfg, l1, altDA)
 	} else {
 		finalizer = finality.NewFinalizer(driverCtx, log, cfg, l1)
 	}
@@ -207,7 +215,7 @@ func NewDriver(
 	sys.Register("attributes-handler",
 		attributes.NewAttributesHandler(log, cfg, driverCtx, l2), opts)
 
-	derivationPipeline := derive.NewDerivationPipeline(log, cfg, verifConfDepth, l1Blobs, plasma, l2, metrics)
+	derivationPipeline := derive.NewDerivationPipeline(log, cfg, verifConfDepth, l1Blobs, altDA, l2, metrics)
 
 	sys.Register("pipeline",
 		derive.NewPipelineDeriver(driverCtx, derivationPipeline), opts)
@@ -223,7 +231,7 @@ func NewDriver(
 		L2:             l2,
 		Log:            log,
 		Ctx:            driverCtx,
-		Drain:          drain,
+		Drain:          drain.Drain,
 	}
 	sys.Register("sync", syncDeriver, opts)
 
@@ -247,12 +255,11 @@ func NewDriver(
 
 	driverEmitter := sys.Register("driver", nil, opts)
 	driver := &Driver{
-		eventSys:         sys,
 		statusTracker:    statusTracker,
 		SyncDeriver:      syncDeriver,
 		sched:            schedDeriv,
 		emitter:          driverEmitter,
-		drain:            drain,
+		drain:            drain.Drain,
 		stateReq:         make(chan chan struct{}),
 		forceReset:       make(chan chan struct{}, 10),
 		driverConfig:     driverCfg,

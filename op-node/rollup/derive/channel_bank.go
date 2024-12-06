@@ -37,14 +37,13 @@ type ChannelBank struct {
 	channels     map[ChannelID]*Channel // channels by ID
 	channelQueue []ChannelID            // channels in FIFO order
 
-	prev    NextFrameProvider
-	fetcher L1Fetcher
+	prev NextFrameProvider
 }
 
 var _ ResettableStage = (*ChannelBank)(nil)
 
 // NewChannelBank creates a ChannelBank, which should be Reset(origin) before use.
-func NewChannelBank(log log.Logger, cfg *rollup.Config, prev NextFrameProvider, fetcher L1Fetcher, m Metrics) *ChannelBank {
+func NewChannelBank(log log.Logger, cfg *rollup.Config, prev NextFrameProvider, m Metrics) *ChannelBank {
 	return &ChannelBank{
 		log:          log,
 		spec:         rollup.NewChainSpec(cfg),
@@ -52,7 +51,6 @@ func NewChannelBank(log log.Logger, cfg *rollup.Config, prev NextFrameProvider, 
 		channels:     make(map[ChannelID]*Channel),
 		channelQueue: make([]ChannelID, 0, 10),
 		prev:         prev,
-		fetcher:      fetcher,
 	}
 }
 
@@ -98,7 +96,7 @@ func (cb *ChannelBank) IngestFrame(f Frame) {
 	}
 
 	// check if the channel is not timed out
-	if currentCh.OpenBlockNumber()+cb.spec.ChannelTimeout() < origin.Number {
+	if currentCh.OpenBlockNumber()+cb.spec.ChannelTimeout(origin.Time) < origin.Number {
 		log.Warn("channel is timed out, ignore frame")
 		return
 	}
@@ -125,7 +123,7 @@ func (cb *ChannelBank) Read() (data []byte, err error) {
 	// channels at the head of the queue and we want to remove them all.
 	first := cb.channelQueue[0]
 	ch := cb.channels[first]
-	timedOut := ch.OpenBlockNumber()+cb.spec.ChannelTimeout() < cb.Origin().Number
+	timedOut := ch.OpenBlockNumber()+cb.spec.ChannelTimeout(cb.Origin().Time) < cb.Origin().Number
 	if timedOut {
 		cb.log.Info("channel timed out", "channel", first, "frames", len(ch.inputs))
 		cb.metrics.RecordChannelTimedOut()
@@ -157,7 +155,7 @@ func (cb *ChannelBank) Read() (data []byte, err error) {
 func (cb *ChannelBank) tryReadChannelAtIndex(i int) (data []byte, err error) {
 	chanID := cb.channelQueue[i]
 	ch := cb.channels[chanID]
-	timedOut := ch.OpenBlockNumber()+cb.spec.ChannelTimeout() < cb.Origin().Number
+	timedOut := ch.OpenBlockNumber()+cb.spec.ChannelTimeout(cb.Origin().Time) < cb.Origin().Number
 	if timedOut || !ch.IsReady() {
 		return nil, io.EOF
 	}

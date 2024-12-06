@@ -12,13 +12,22 @@ import { Proxy } from "src/universal/Proxy.sol";
 
 // Target contract
 import { ResourceMetering } from "src/L1/ResourceMetering.sol";
+import { IResourceMetering } from "src/L1/interfaces/IResourceMetering.sol";
 
 contract MeterUser is ResourceMetering {
     ResourceMetering.ResourceConfig public innerConfig;
 
     constructor() {
         initialize();
-        innerConfig = Constants.DEFAULT_RESOURCE_CONFIG();
+        IResourceMetering.ResourceConfig memory rcfg = Constants.DEFAULT_RESOURCE_CONFIG();
+        innerConfig = ResourceMetering.ResourceConfig({
+            maxResourceLimit: rcfg.maxResourceLimit,
+            elasticityMultiplier: rcfg.elasticityMultiplier,
+            baseFeeMaxChangeDenominator: rcfg.baseFeeMaxChangeDenominator,
+            minimumBaseFee: rcfg.minimumBaseFee,
+            systemTxMaxGas: rcfg.systemTxMaxGas,
+            maximumBaseFee: rcfg.maximumBaseFee
+        });
     }
 
     function initialize() public initializer {
@@ -231,7 +240,15 @@ contract CustomMeterUser is ResourceMetering {
     }
 
     function _resourceConfig() internal pure override returns (ResourceMetering.ResourceConfig memory) {
-        return Constants.DEFAULT_RESOURCE_CONFIG();
+        IResourceMetering.ResourceConfig memory rcfg = Constants.DEFAULT_RESOURCE_CONFIG();
+        return ResourceMetering.ResourceConfig({
+            maxResourceLimit: rcfg.maxResourceLimit,
+            elasticityMultiplier: rcfg.elasticityMultiplier,
+            baseFeeMaxChangeDenominator: rcfg.baseFeeMaxChangeDenominator,
+            minimumBaseFee: rcfg.minimumBaseFee,
+            systemTxMaxGas: rcfg.systemTxMaxGas,
+            maximumBaseFee: rcfg.maximumBaseFee
+        });
     }
 
     function use(uint64 _amount) public returns (uint256) {
@@ -281,7 +298,13 @@ contract ArtifactResourceMetering_Test is Test {
 
     /// @dev Generates a CSV file. No more than the L1 block gas limit should
     ///      be supplied to the `meter` function to avoid long execution time.
+    ///      This test is skipped because there is no need to run it every time.
+    ///      It generates a CSV file on disk that can be used to analyze the
+    ///      gas usage and cost of the `ResourceMetering` contract. The next time
+    ///      that the gas usage needs to be analyzed, the skip may be removed.
     function test_meter_generateArtifact_succeeds() external {
+        vm.skip({ skipTest: true });
+
         vm.writeLine(
             outfile,
             "prevBaseFee,prevBoughtGas,prevBlockNumDiff,l1BaseFee,requestedGas,gasConsumed,ethPrice,usdCost,success"

@@ -22,7 +22,7 @@ const defaultGasLimit = 30_000_000
 var BedrockTransitionBlockExtraData = []byte("BEDROCK")
 
 // NewL2Genesis will create a new L2 genesis
-func NewL2Genesis(config *DeployConfig, block *types.Block) (*core.Genesis, error) {
+func NewL2Genesis(config *DeployConfig, l1StartHeader *types.Header) (*core.Genesis, error) {
 	if config.L2ChainID == 0 {
 		return nil, errors.New("must define L2 ChainID")
 	}
@@ -39,6 +39,8 @@ func NewL2Genesis(config *DeployConfig, block *types.Block) (*core.Genesis, erro
 	if eip1559Elasticity == 0 {
 		eip1559Elasticity = 10
 	}
+
+	l1StartTime := l1StartHeader.Time
 
 	optimismChainConfig := params.ChainConfig{
 		ChainID:                       new(big.Int).SetUint64(config.L2ChainID),
@@ -61,17 +63,18 @@ func NewL2Genesis(config *DeployConfig, block *types.Block) (*core.Genesis, erro
 		TerminalTotalDifficulty:       big.NewInt(0),
 		TerminalTotalDifficultyPassed: true,
 		BedrockBlock:                  new(big.Int).SetUint64(uint64(config.L2GenesisBlockNumber)),
-		RegolithTime:                  config.RegolithTime(block.Time()),
-		CanyonTime:                    config.CanyonTime(block.Time()),
-		ShanghaiTime:                  config.CanyonTime(block.Time()),
-		CancunTime:                    config.EcotoneTime(block.Time()),
-		EcotoneTime:                   config.EcotoneTime(block.Time()),
-		FjordTime:                     config.FjordTime(block.Time()),
-		InteropTime:                   config.InteropTime(block.Time()),
+		RegolithTime:                  config.RegolithTime(l1StartTime),
+		CanyonTime:                    config.CanyonTime(l1StartTime),
+		ShanghaiTime:                  config.CanyonTime(l1StartTime),
+		CancunTime:                    config.EcotoneTime(l1StartTime),
+		EcotoneTime:                   config.EcotoneTime(l1StartTime),
+		FjordTime:                     config.FjordTime(l1StartTime),
+		GraniteTime:                   config.GraniteTime(l1StartTime),
+		InteropTime:                   config.InteropTime(l1StartTime),
 		Optimism: &params.OptimismConfig{
 			EIP1559Denominator:       eip1559Denom,
 			EIP1559Elasticity:        eip1559Elasticity,
-			EIP1559DenominatorCanyon: eip1559DenomCanyon,
+			EIP1559DenominatorCanyon: &eip1559DenomCanyon,
 		},
 	}
 
@@ -101,7 +104,7 @@ func NewL2Genesis(config *DeployConfig, block *types.Block) (*core.Genesis, erro
 	genesis := &core.Genesis{
 		Config:     &optimismChainConfig,
 		Nonce:      uint64(config.L2GenesisBlockNonce),
-		Timestamp:  block.Time(),
+		Timestamp:  l1StartTime,
 		ExtraData:  extraData,
 		GasLimit:   uint64(gasLimit),
 		Difficulty: difficulty.ToInt(),
@@ -176,7 +179,7 @@ func NewL1Genesis(config *DeployConfig) (*core.Genesis, error) {
 	}
 	difficulty := config.L1GenesisBlockDifficulty
 	if difficulty == nil {
-		difficulty = newHexBig(1)
+		difficulty = newHexBig(0) // default to Merge-compatible difficulty value
 	}
 	timestamp := config.L1GenesisBlockTimestamp
 	if timestamp == 0 {
@@ -188,19 +191,21 @@ func NewL1Genesis(config *DeployConfig) (*core.Genesis, error) {
 	}
 
 	return &core.Genesis{
-		Config:     &chainConfig,
-		Nonce:      uint64(config.L1GenesisBlockNonce),
-		Timestamp:  uint64(timestamp),
-		ExtraData:  extraData,
-		GasLimit:   uint64(gasLimit),
-		Difficulty: difficulty.ToInt(),
-		Mixhash:    config.L1GenesisBlockMixHash,
-		Coinbase:   config.L1GenesisBlockCoinbase,
-		Number:     uint64(config.L1GenesisBlockNumber),
-		GasUsed:    uint64(config.L1GenesisBlockGasUsed),
-		ParentHash: config.L1GenesisBlockParentHash,
-		BaseFee:    baseFee.ToInt(),
-		Alloc:      map[common.Address]types.Account{},
+		Config:        &chainConfig,
+		Nonce:         uint64(config.L1GenesisBlockNonce),
+		Timestamp:     uint64(timestamp),
+		ExtraData:     extraData,
+		GasLimit:      uint64(gasLimit),
+		Difficulty:    difficulty.ToInt(),
+		Mixhash:       config.L1GenesisBlockMixHash,
+		Coinbase:      config.L1GenesisBlockCoinbase,
+		Number:        uint64(config.L1GenesisBlockNumber),
+		GasUsed:       uint64(config.L1GenesisBlockGasUsed),
+		ParentHash:    config.L1GenesisBlockParentHash,
+		BaseFee:       baseFee.ToInt(),
+		ExcessBlobGas: (*uint64)(config.L1GenesisBlockExcessBlobGas),
+		BlobGasUsed:   (*uint64)(config.L1GenesisBlockBlobGasUsed),
+		Alloc:         map[common.Address]types.Account{},
 	}, nil
 }
 

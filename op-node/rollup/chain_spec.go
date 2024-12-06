@@ -1,6 +1,9 @@
 package rollup
 
 import (
+	"math/big"
+
+	"github.com/ethereum-optimism/optimism/op-node/params"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -20,11 +23,6 @@ const (
 	maxRLPBytesPerChannelFjord   = 100_000_000
 )
 
-// SafeMaxRLPBytesPerChannel is a limit of RLP Bytes per channel that is valid across every OP Stack chain.
-// The limit on certain chains at certain times may be higher
-// TODO(#10428) Remove this parameter
-const SafeMaxRLPBytesPerChannel = maxRLPBytesPerChannelBedrock
-
 // Fjord changes the max sequencer drift to a protocol constant. It was previously configurable via
 // the rollup config.
 // From Fjord, the max sequencer drift for a given block timestamp should be learned via the
@@ -40,6 +38,8 @@ const (
 	Delta    ForkName = "delta"
 	Ecotone  ForkName = "ecotone"
 	Fjord    ForkName = "fjord"
+	Granite  ForkName = "granite"
+	Holocene ForkName = "holocene"
 	Interop  ForkName = "interop"
 	None     ForkName = "none"
 )
@@ -50,7 +50,9 @@ var nextFork = map[ForkName]ForkName{
 	Canyon:   Delta,
 	Delta:    Ecotone,
 	Ecotone:  Fjord,
-	Fjord:    Interop,
+	Fjord:    Granite,
+	Granite:  Holocene,
+	Holocene: Interop,
 	Interop:  None,
 }
 
@@ -61,6 +63,16 @@ type ChainSpec struct {
 
 func NewChainSpec(config *Config) *ChainSpec {
 	return &ChainSpec{config: config}
+}
+
+// L2ChainID returns the chain ID of the L2 chain.
+func (s *ChainSpec) L2ChainID() *big.Int {
+	return s.config.L2ChainID
+}
+
+// L2GenesisTime returns the genesis time of the L2 chain.
+func (s *ChainSpec) L2GenesisTime() uint64 {
+	return s.config.Genesis.L2Time
 }
 
 // IsCanyon returns true if t >= canyon_time
@@ -78,8 +90,11 @@ func (s *ChainSpec) MaxChannelBankSize(t uint64) uint64 {
 }
 
 // ChannelTimeout returns the channel timeout constant.
-func (s *ChainSpec) ChannelTimeout() uint64 {
-	return s.config.ChannelTimeout
+func (s *ChainSpec) ChannelTimeout(t uint64) uint64 {
+	if s.config.IsGranite(t) {
+		return params.ChannelTimeoutGranite
+	}
+	return s.config.ChannelTimeoutBedrock
 }
 
 // MaxRLPBytesPerChannel returns the maximum amount of bytes that will be read from
@@ -130,6 +145,12 @@ func (s *ChainSpec) CheckForkActivation(log log.Logger, block eth.L2BlockRef) {
 		if s.config.IsFjord(block.Time) {
 			s.currentFork = Fjord
 		}
+		if s.config.IsGranite(block.Time) {
+			s.currentFork = Granite
+		}
+		if s.config.IsHolocene(block.Time) {
+			s.currentFork = Holocene
+		}
 		if s.config.IsInterop(block.Time) {
 			s.currentFork = Interop
 		}
@@ -150,6 +171,10 @@ func (s *ChainSpec) CheckForkActivation(log log.Logger, block eth.L2BlockRef) {
 		foundActivationBlock = s.config.IsEcotoneActivationBlock(block.Time)
 	case Fjord:
 		foundActivationBlock = s.config.IsFjordActivationBlock(block.Time)
+	case Granite:
+		foundActivationBlock = s.config.IsGraniteActivationBlock(block.Time)
+	case Holocene:
+		foundActivationBlock = s.config.IsHoloceneActivationBlock(block.Time)
 	case Interop:
 		foundActivationBlock = s.config.IsInteropActivationBlock(block.Time)
 	}

@@ -100,9 +100,9 @@ func TestChannelBankSimple(t *testing.T) {
 	input.AddFrames("a:1:second")
 	input.AddFrame(Frame{}, io.EOF)
 
-	cfg := &rollup.Config{ChannelTimeout: 10}
+	cfg := &rollup.Config{ChannelTimeoutBedrock: 10}
 
-	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, nil, metrics.NoopMetrics)
+	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, metrics.NoopMetrics)
 
 	// Load the first frame
 	out, err := cb.NextData(context.Background())
@@ -144,9 +144,9 @@ func TestChannelBankInterleavedPreCanyon(t *testing.T) {
 	input.AddFrames("a:1:second")
 	input.AddFrame(Frame{}, io.EOF)
 
-	cfg := &rollup.Config{ChannelTimeout: 10, CanyonTime: nil}
+	cfg := &rollup.Config{ChannelTimeoutBedrock: 10, CanyonTime: nil}
 
-	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, nil, metrics.NoopMetrics)
+	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, metrics.NoopMetrics)
 
 	// Load a:0
 	out, err := cb.NextData(context.Background())
@@ -209,9 +209,9 @@ func TestChannelBankInterleaved(t *testing.T) {
 	input.AddFrame(Frame{}, io.EOF)
 
 	ct := uint64(0)
-	cfg := &rollup.Config{ChannelTimeout: 10, CanyonTime: &ct}
+	cfg := &rollup.Config{ChannelTimeoutBedrock: 10, CanyonTime: &ct}
 
-	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, nil, metrics.NoopMetrics)
+	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, metrics.NoopMetrics)
 
 	// Load a:0
 	out, err := cb.NextData(context.Background())
@@ -269,9 +269,9 @@ func TestChannelBankDuplicates(t *testing.T) {
 	input.AddFrames("a:1:second")
 	input.AddFrame(Frame{}, io.EOF)
 
-	cfg := &rollup.Config{ChannelTimeout: 10}
+	cfg := &rollup.Config{ChannelTimeoutBedrock: 10}
 
-	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, nil, metrics.NoopMetrics)
+	cb := NewChannelBank(testlog.Logger(t, log.LevelCrit), cfg, input, metrics.NoopMetrics)
 
 	// Load the first frame
 	out, err := cb.NextData(context.Background())

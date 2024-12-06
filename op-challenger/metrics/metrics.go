@@ -38,7 +38,6 @@ type Metricer interface {
 	RecordGameStep()
 	RecordGameMove()
 	RecordGameL2Challenge()
-	RecordVmExecutionTime(vmType string, t time.Duration)
 	RecordClaimResolutionTime(t float64)
 	RecordGameActTime(t float64)
 
@@ -59,6 +58,10 @@ type Metricer interface {
 	DecActiveExecutors()
 	IncIdleExecutors()
 	DecIdleExecutors()
+
+	// Record vm execution metrics
+	VmMetricer
+	VmMetrics(vmType string) *VmMetrics
 }
 
 // Metrics implementation must implement RegistryMetricer to allow the metrics server to work.
@@ -94,6 +97,7 @@ type Metrics struct {
 	claimResolutionTime prometheus.Histogram
 	gameActTime         prometheus.Histogram
 	vmExecutionTime     *prometheus.HistogramVec
+	vmMemoryUsed        *prometheus.HistogramVec
 
 	trackedGames  prometheus.GaugeVec
 	inflightGames prometheus.Gauge
@@ -175,6 +179,13 @@ func NewMetrics() *Metrics {
 			Buckets: append(
 				[]float64{1.0, 10.0},
 				prometheus.ExponentialBuckets(30.0, 2.0, 14)...),
+		}, []string{"vm"}),
+		vmMemoryUsed: factory.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Name:      "vm_memory_used",
+			Help:      "Memory used (in bytes) to execute the fault proof VM",
+			// 100MiB increments from 0 to 1.5GiB
+			Buckets: prometheus.LinearBuckets(0, 1024*1024*100, 15),
 		}, []string{"vm"}),
 		bondClaimFailures: factory.NewCounter(prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -285,6 +296,10 @@ func (m *Metrics) RecordVmExecutionTime(vmType string, dur time.Duration) {
 	m.vmExecutionTime.WithLabelValues(vmType).Observe(dur.Seconds())
 }
 
+func (m *Metrics) RecordVmMemoryUsed(vmType string, memoryUsed uint64) {
+	m.vmMemoryUsed.WithLabelValues(vmType).Observe(float64(memoryUsed))
+}
+
 func (m *Metrics) RecordClaimResolutionTime(t float64) {
 	m.claimResolutionTime.Observe(t)
 }
@@ -325,4 +340,8 @@ func (m *Metrics) RecordGameUpdateScheduled() {
 
 func (m *Metrics) RecordGameUpdateCompleted() {
 	m.inflightGames.Sub(1)
+}
+
+func (m *Metrics) VmMetrics(vmType string) *VmMetrics {
+	return NewVmMetrics(m, vmType)
 }

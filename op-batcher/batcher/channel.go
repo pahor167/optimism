@@ -35,7 +35,7 @@ type channel struct {
 }
 
 func newChannel(log log.Logger, metr metrics.Metricer, cfg ChannelConfig, rollupCfg *rollup.Config, latestL1OriginBlockNum uint64) (*channel, error) {
-	cb, err := NewChannelBuilder(cfg, *rollupCfg, latestL1OriginBlockNum)
+	cb, err := NewChannelBuilder(cfg, rollupCfg, latestL1OriginBlockNum)
 	if err != nil {
 		return nil, fmt.Errorf("creating new channel: %w", err)
 	}
@@ -134,6 +134,9 @@ func (s *channel) updateInclusionBlocks() {
 func (s *channel) isTimedOut() bool {
 	// Update min/max inclusion blocks for timeout check
 	s.updateInclusionBlocks()
+	// Prior to the granite hard fork activating, the use of the shorter ChannelTimeout here may cause the batcher
+	// to believe the channel timed out when it was valid. It would then resubmit the blocks needlessly.
+	// This wastes batcher funds but doesn't cause any problems for the chain progressing safe head.
 	return s.maxInclusionBlock-s.minInclusionBlock >= s.cfg.ChannelTimeout
 }
 
@@ -152,32 +155,33 @@ func (s *channel) ID() derive.ChannelID {
 	return s.channelBuilder.ID()
 }
 
-// NextTxData returns the next tx data packet.
-// If cfg.MultiFrameTxs is false, it returns txData with a single frame.
-// If cfg.MultiFrameTxs is true, it will read frames from its channel builder
+// NextTxData dequeues the next frames from the channel and returns them encoded in a tx data packet.
+// If cfg.UseBlobs is false, it returns txData with a single frame.
+// If cfg.UseBlobs is true, it will read frames from its channel builder
 // until it either doesn't have more frames or the target number of frames is reached.
 //
 // NextTxData should only be called after HasTxData returned true.
 func (s *channel) NextTxData() txData {
 	nf := s.cfg.MaxFramesPerTx()
-	txdata := txData{frames: make([]frameData, 0, nf)}
+	txdata := txData{frames: make([]frameData, 0, nf), asBlob: s.cfg.UseBlobs}
 	for i := 0; i < nf && s.channelBuilder.HasFrame(); i++ {
 		frame := s.channelBuilder.NextFrame()
 		txdata.frames = append(txdata.frames, frame)
 	}
 
 	id := txdata.ID().String()
-	s.log.Debug("returning next tx data", "id", id, "num_frames", len(txdata.frames))
+	s.log.Debug("returning next tx data", "id", id, "num_frames", len(txdata.frames), "as_blob", txdata.asBlob)
 	s.pendingTransactions[id] = txdata
 
 	return txdata
 }
 
 func (s *channel) HasTxData() bool {
-	if s.IsFull() || !s.cfg.MultiFrameTxs {
+	if s.IsFull() || // If the channel is full, we should start to submit it
+		!s.cfg.UseBlobs { // If using calldata, we only send one frame per tx
 		return s.channelBuilder.HasFrame()
 	}
-	// collect enough frames if channel is not full yet
+	// Collect enough frames if channel is not full yet
 	return s.channelBuilder.PendingFrames() >= int(s.cfg.MaxFramesPerTx())
 }
 

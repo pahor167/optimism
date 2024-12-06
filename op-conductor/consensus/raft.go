@@ -10,7 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/hashicorp/raft"
-	boltdb "github.com/hashicorp/raft-boltdb"
+	boltdb "github.com/hashicorp/raft-boltdb/v2"
 	"github.com/pkg/errors"
 
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
@@ -32,12 +32,36 @@ type RaftConsensus struct {
 	unsafeTracker *unsafeHeadTracker
 }
 
-// NewRaftConsensus creates a new RaftConsensus instance.
-func NewRaftConsensus(log log.Logger, serverID, serverAddr, storageDir string, bootstrap bool, rollupCfg *rollup.Config) (*RaftConsensus, error) {
-	rc := raft.DefaultConfig()
-	rc.LocalID = raft.ServerID(serverID)
+type RaftConsensusConfig struct {
+	ServerID          string
+	ServerAddr        string
+	StorageDir        string
+	Bootstrap         bool
+	RollupCfg         *rollup.Config
+	SnapshotInterval  time.Duration
+	SnapshotThreshold uint64
+	TrailingLogs      uint64
+}
 
-	baseDir := filepath.Join(storageDir, serverID)
+// checkTCPPortOpen attempts to connect to the specified address and returns an error if the connection fails.
+func checkTCPPortOpen(address string) error {
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return nil
+}
+
+// NewRaftConsensus creates a new RaftConsensus instance.
+func NewRaftConsensus(log log.Logger, cfg *RaftConsensusConfig) (*RaftConsensus, error) {
+	rc := raft.DefaultConfig()
+	rc.SnapshotInterval = cfg.SnapshotInterval
+	rc.TrailingLogs = cfg.TrailingLogs
+	rc.SnapshotThreshold = cfg.SnapshotThreshold
+	rc.LocalID = raft.ServerID(cfg.ServerID)
+
+	baseDir := filepath.Join(cfg.StorageDir, cfg.ServerID)
 	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(baseDir, 0o755); err != nil {
 			return nil, fmt.Errorf("error creating storage dir: %w", err)
@@ -62,7 +86,7 @@ func NewRaftConsensus(log log.Logger, serverID, serverAddr, storageDir string, b
 		return nil, fmt.Errorf(`raft.NewFileSnapshotStore(%q): %w`, baseDir, err)
 	}
 
-	addr, err := net.ResolveTCPAddr("tcp", serverAddr)
+	addr, err := net.ResolveTCPAddr("tcp", cfg.ServerAddr)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to resolve tcp address")
 	}
@@ -85,18 +109,18 @@ func NewRaftConsensus(log log.Logger, serverID, serverAddr, storageDir string, b
 
 	// If bootstrap = true, start raft in bootstrap mode, this will allow the current node to elect itself as leader when there's no other participants
 	// and allow other nodes to join the cluster.
-	if bootstrap {
-		cfg := raft.Configuration{
+	if cfg.Bootstrap {
+		raftCfg := raft.Configuration{
 			Servers: []raft.Server{
 				{
 					ID:       rc.LocalID,
-					Address:  raft.ServerAddress(serverAddr),
+					Address:  raft.ServerAddress(cfg.ServerAddr),
 					Suffrage: raft.Voter,
 				},
 			},
 		}
 
-		f := r.BootstrapCluster(cfg)
+		f := r.BootstrapCluster(raftCfg)
 		if err := f.Error(); err != nil {
 			return nil, errors.Wrap(err, "failed to bootstrap raft cluster")
 		}
@@ -105,14 +129,18 @@ func NewRaftConsensus(log log.Logger, serverID, serverAddr, storageDir string, b
 	return &RaftConsensus{
 		log:           log,
 		r:             r,
-		serverID:      raft.ServerID(serverID),
+		serverID:      raft.ServerID(cfg.ServerID),
 		unsafeTracker: fsm,
-		rollupCfg:     rollupCfg,
+		rollupCfg:     cfg.RollupCfg,
 	}, nil
 }
 
 // AddNonVoter implements Consensus, it tries to add a non-voting member into the cluster.
 func (rc *RaftConsensus) AddNonVoter(id string, addr string, version uint64) error {
+	if err := checkTCPPortOpen(addr); err != nil {
+		rc.log.Error("connection test to member addr failed", "id", id, "addr", addr, "err", err)
+		return err
+	}
 	if err := rc.r.AddNonvoter(raft.ServerID(id), raft.ServerAddress(addr), version, defaultTimeout).Error(); err != nil {
 		rc.log.Error("failed to add non-voter", "id", id, "addr", addr, "version", version, "err", err)
 		return err
@@ -122,6 +150,10 @@ func (rc *RaftConsensus) AddNonVoter(id string, addr string, version uint64) err
 
 // AddVoter implements Consensus, it tries to add a voting member into the cluster.
 func (rc *RaftConsensus) AddVoter(id string, addr string, version uint64) error {
+	if err := checkTCPPortOpen(addr); err != nil {
+		rc.log.Error("connection test to member addr failed", "id", id, "addr", addr, "err", err)
+		return err
+	}
 	if err := rc.r.AddVoter(raft.ServerID(id), raft.ServerAddress(addr), version, defaultTimeout).Error(); err != nil {
 		rc.log.Error("failed to add voter", "id", id, "addr", addr, "version", version, "err", err)
 		return err

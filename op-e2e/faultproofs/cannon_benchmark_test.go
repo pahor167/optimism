@@ -11,15 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum-optimism/optimism/cannon/mipsevm"
-	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/trace/utils"
 	op_e2e "github.com/ethereum-optimism/optimism/op-e2e"
-	"github.com/ethereum-optimism/optimism/op-e2e/bindings"
-	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/wait"
-	"github.com/ethereum-optimism/optimism/op-service/client"
-	"github.com/ethereum-optimism/optimism/op-service/predeploys"
-	"github.com/ethereum-optimism/optimism/op-service/sources"
-	"github.com/ethereum-optimism/optimism/op-service/testlog"
+	"github.com/ethereum-optimism/optimism/op-e2e/system/e2esys"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -27,9 +21,15 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ethereum-optimism/optimism/cannon/mipsevm"
+	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/trace/utils"
+	"github.com/ethereum-optimism/optimism/op-e2e/bindings"
+	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/wait"
+	"github.com/ethereum-optimism/optimism/op-service/predeploys"
+	"github.com/ethereum-optimism/optimism/op-service/testlog"
 )
 
 func TestBenchmarkCannon_FPP(t *testing.T) {
@@ -37,7 +37,7 @@ func TestBenchmarkCannon_FPP(t *testing.T) {
 
 	op_e2e.InitParallel(t, op_e2e.UsesCannon)
 	ctx := context.Background()
-	cfg := op_e2e.DefaultSystemConfig(t)
+	cfg := e2esys.DefaultSystemConfig(t)
 	// We don't need a verifier - just the sequencer is enough
 	delete(cfg.Nodes, "verifier")
 	// Use a small sequencer window size to avoid test timeout while waiting for empty blocks
@@ -49,16 +49,13 @@ func TestBenchmarkCannon_FPP(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
-	defer sys.Close()
 
 	log := testlog.Logger(t, log.LevelInfo)
 	log.Info("genesis", "l2", sys.RollupConfig.Genesis.L2, "l1", sys.RollupConfig.Genesis.L1, "l2_time", sys.RollupConfig.Genesis.L2Time)
 
-	l1Client := sys.Clients["l1"]
-	l2Seq := sys.Clients["sequencer"]
-	rollupRPCClient, err := rpc.DialContext(context.Background(), sys.RollupNodes["sequencer"].HTTPEndpoint())
-	require.Nil(t, err)
-	rollupClient := sources.NewRollupClient(client.NewBaseRPCClient(rollupRPCClient))
+	l1Client := sys.NodeClient("l1")
+	l2Seq := sys.NodeClient("sequencer")
+	rollupClient := sys.RollupClient("sequencer")
 	require.NoError(t, wait.ForUnsafeBlock(ctx, rollupClient, 1))
 
 	// Agreed state: 200 Big Contracts deployed at max size - total codesize is 5.90 MB
@@ -98,7 +95,7 @@ func TestBenchmarkCannon_FPP(t *testing.T) {
 		L2BlockNumber: l2ClaimBlockNumber,
 	}
 	debugfile := path.Join(t.TempDir(), "debug.json")
-	runCannon(t, ctx, sys, inputs, "sequencer", "--debug-info", debugfile)
+	runCannon(t, ctx, sys, inputs, "--debug-info", debugfile)
 	data, err := os.ReadFile(debugfile)
 	require.NoError(t, err)
 	var debuginfo mipsevm.DebugInfo
@@ -107,7 +104,7 @@ func TestBenchmarkCannon_FPP(t *testing.T) {
 	// TODO(client-pod#906): Use maximum witness size for assertions against pages allocated by the VM
 }
 
-func createBigContracts(ctx context.Context, t *testing.T, cfg op_e2e.SystemConfig, client *ethclient.Client, key *ecdsa.PrivateKey, numContracts int) []common.Address {
+func createBigContracts(ctx context.Context, t *testing.T, cfg e2esys.SystemConfig, client *ethclient.Client, key *ecdsa.PrivateKey, numContracts int) []common.Address {
 	/*
 		contract Big {
 			bytes constant foo = hex"<24.4 KB of random data>";
@@ -167,7 +164,7 @@ func createBigContracts(ctx context.Context, t *testing.T, cfg op_e2e.SystemConf
 	return addrs
 }
 
-func callBigContracts(ctx context.Context, t *testing.T, cfg op_e2e.SystemConfig, client *ethclient.Client, key *ecdsa.PrivateKey, addrs []common.Address) *types.Receipt {
+func callBigContracts(ctx context.Context, t *testing.T, cfg e2esys.SystemConfig, client *ethclient.Client, key *ecdsa.PrivateKey, addrs []common.Address) *types.Receipt {
 	multicall3, err := bindings.NewMultiCall3(predeploys.MultiCall3Addr, client)
 	require.NoError(t, err)
 

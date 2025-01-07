@@ -16,13 +16,13 @@ temp_dir=$(mktemp -d)
 trap 'rm -rf "$temp_dir"' EXIT
 
 # Exit early if semver-lock.json has not changed.
-if ! git diff origin/develop...HEAD --name-only | grep -q "$SEMVER_LOCK"; then
+if ! { git diff origin/develop...HEAD --name-only; git diff --name-only; git diff --cached --name-only; } | grep -q "$SEMVER_LOCK"; then
     echo "No changes detected in semver-lock.json"
     exit 0
 fi
 
 # Get the upstream semver-lock.json.
-git show origin/develop:packages/contracts-bedrock/semver-lock.json > "$temp_dir/upstream_semver_lock.json"
+git show origin/develop:packages/contracts-bedrock/snapshots/semver-lock.json > "$temp_dir/upstream_semver_lock.json"
 
 # Copy the local semver-lock.json.
 cp "$SEMVER_LOCK" "$temp_dir/local_semver_lock.json"
@@ -71,9 +71,12 @@ for contract in $changed_contracts; do
         has_errors=true
     fi
 
+    # TODO: Use an existing semver comparison function since this will only
+    # check if the version has changed at all and not that the version has
+    # increased properly.
     # Check if the version changed.
     if [ "$old_version" = "$new_version" ]; then
-        echo "❌ Error: src/$contract has changes in semver-lock.json but no version change"
+        echo "❌ Error: $contract has changes in semver-lock.json but no version change"
         echo "   Old version: $old_version"
         echo "   New version: $new_version"
         has_errors=true

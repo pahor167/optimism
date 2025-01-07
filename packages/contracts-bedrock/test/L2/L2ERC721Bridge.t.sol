@@ -2,7 +2,6 @@
 pragma solidity 0.8.15;
 
 // Testing
-import { console } from "forge-std/console.sol";
 import { Bridge_Initializer } from "test/setup/Bridge_Initializer.sol";
 
 // Contracts
@@ -241,7 +240,7 @@ contract L2ERC721Bridge_Test is Bridge_Initializer {
         // Finalize a withdrawal.
         vm.mockCall(
             address(l2CrossDomainMessenger),
-            abi.encodeWithSelector(l2CrossDomainMessenger.xDomainMessageSender.selector),
+            abi.encodeCall(l2CrossDomainMessenger.xDomainMessageSender, ()),
             abi.encode(l1ERC721Bridge)
         );
         vm.prank(address(l2CrossDomainMessenger));
@@ -265,7 +264,7 @@ contract L2ERC721Bridge_Test is Bridge_Initializer {
         // to be compliant with the `IOptimismMintableERC721` interface.
         vm.mockCall(
             address(l2CrossDomainMessenger),
-            abi.encodeWithSelector(l2CrossDomainMessenger.xDomainMessageSender.selector),
+            abi.encodeCall(l2CrossDomainMessenger.xDomainMessageSender, ()),
             abi.encode(l1ERC721Bridge)
         );
         vm.prank(address(l2CrossDomainMessenger));
@@ -288,7 +287,7 @@ contract L2ERC721Bridge_Test is Bridge_Initializer {
         // Finalize a withdrawal.
         vm.mockCall(
             address(l2CrossDomainMessenger),
-            abi.encodeWithSelector(l2CrossDomainMessenger.xDomainMessageSender.selector),
+            abi.encodeCall(l2CrossDomainMessenger.xDomainMessageSender, ()),
             abi.encode(alice)
         );
         vm.prank(address(l2CrossDomainMessenger));
@@ -302,7 +301,7 @@ contract L2ERC721Bridge_Test is Bridge_Initializer {
         // Finalize a withdrawal.
         vm.mockCall(
             address(l2CrossDomainMessenger),
-            abi.encodeWithSelector(l2CrossDomainMessenger.xDomainMessageSender.selector),
+            abi.encodeCall(l2CrossDomainMessenger.xDomainMessageSender, ()),
             abi.encode(address(l1ERC721Bridge))
         );
         vm.prank(address(l2CrossDomainMessenger));
@@ -317,7 +316,7 @@ contract L2ERC721Bridge_Test is Bridge_Initializer {
         // Finalize a withdrawal.
         vm.mockCall(
             address(l2CrossDomainMessenger),
-            abi.encodeWithSelector(l2CrossDomainMessenger.xDomainMessageSender.selector),
+            abi.encodeCall(l2CrossDomainMessenger.xDomainMessageSender, ()),
             abi.encode(address(l1ERC721Bridge))
         );
         vm.prank(address(l2CrossDomainMessenger));

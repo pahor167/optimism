@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
 	derivetest "github.com/ethereum-optimism/optimism/op-node/rollup/derive/test"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
+	"github.com/ethereum-optimism/optimism/op-service/queue"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -87,7 +88,7 @@ func ChannelManagerReturnsErrReorg(t *testing.T, batchType uint) {
 	require.NoError(t, m.AddL2Block(c))
 	require.ErrorIs(t, m.AddL2Block(x), ErrReorg)
 
-	require.Equal(t, []*types.Block{a, b, c}, m.blocks)
+	require.Equal(t, queue.Queue[*types.Block]{a, b, c}, m.blocks)
 }
 
 // ChannelManagerReturnsErrReorgWhenDrained ensures that the channel manager
@@ -567,7 +568,7 @@ func TestChannelManager_TxData(t *testing.T) {
 			require.Equal(t, tc.chooseBlobsWhenChannelCreated, m.defaultCfg.UseBlobs)
 
 			// Seed channel manager with a block
-			rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+			rng := rand.New(rand.NewSource(99))
 			blockA := derivetest.RandomL2BlockWithChainId(rng, 200, defaultTestRollupConfig.L2ChainID)
 			m.blocks = []*types.Block{blockA}
 
@@ -626,7 +627,7 @@ func TestChannelManager_Requeue(t *testing.T) {
 
 	// This is the snapshot of channel manager state we want to reinstate
 	// when we requeue
-	stateSnapshot := []*types.Block{blockA, blockB}
+	stateSnapshot := queue.Queue[*types.Block]{blockA, blockB}
 	m.blocks = stateSnapshot
 	require.Empty(t, m.channelQueue)
 
@@ -664,5 +665,28 @@ func TestChannelManager_Requeue(t *testing.T) {
 
 	// The requeue shouldn't affect the pending channel
 	require.Contains(t, m.channelQueue, channel0)
+
 	require.NotContains(t, m.blocks, blockA)
+}
+func TestChannelManager_ChannelOutFactory(t *testing.T) {
+	type ChannelOutWrapper struct {
+		derive.ChannelOut
+	}
+
+	l := testlog.Logger(t, log.LevelCrit)
+	cfg := channelManagerTestConfig(100, derive.SingularBatchType)
+	m := NewChannelManager(l, metrics.NoopMetrics, cfg, defaultTestRollupConfig)
+	m.SetChannelOutFactory(func(cfg ChannelConfig, rollupCfg *rollup.Config) (derive.ChannelOut, error) {
+		co, err := NewChannelOut(cfg, rollupCfg)
+		if err != nil {
+			return nil, err
+		}
+		// return a wrapper type, to validate that the factory was correctly used by checking the type below
+		return &ChannelOutWrapper{
+			ChannelOut: co,
+		}, nil
+	})
+	require.NoError(t, m.ensureChannelWithSpace(eth.BlockID{}))
+
+	require.IsType(t, &ChannelOutWrapper{}, m.currentChannel.channelBuilder.co)
 }

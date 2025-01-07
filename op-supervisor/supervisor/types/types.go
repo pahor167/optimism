@@ -6,19 +6,50 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strconv"
+
+	ethTypes "github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/holiman/uint256"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
 
+// ChainIndex represents the lifetime of a chain in a dependency set.
+type ChainIndex uint32
+
+func (ci ChainIndex) String() string {
+	return strconv.FormatUint(uint64(ci), 10)
+}
+
+func (ci ChainIndex) MarshalText() ([]byte, error) {
+	return []byte(ci.String()), nil
+}
+
+func (ci *ChainIndex) UnmarshalText(data []byte) error {
+	v, err := strconv.ParseUint(string(data), 10, 32)
+	if err != nil {
+		return err
+	}
+	*ci = ChainIndex(v)
+	return nil
+}
+
 type ExecutingMessage struct {
-	Chain     uint32 // same as ChainID for now, but will be indirect, i.e. translated to full ID, later
+	Chain     ChainIndex // same as ChainID for now, but will be indirect, i.e. translated to full ID, later
 	BlockNum  uint64
 	LogIdx    uint32
 	Timestamp uint64
 	Hash      common.Hash
+}
+
+func (s *ExecutingMessage) String() string {
+	return fmt.Sprintf("ExecMsg(chainIndex: %s, block: %d, log: %d, time: %d, logHash: %s)",
+		s.Chain, s.BlockNum, s.LogIdx, s.Timestamp, s.Hash)
 }
 
 type Message struct {
@@ -29,7 +60,7 @@ type Message struct {
 type Identifier struct {
 	Origin      common.Address
 	BlockNumber uint64
-	LogIndex    uint64
+	LogIndex    uint32
 	Timestamp   uint64
 	ChainID     ChainID // flat, not a pointer, to make Identifier safe as map key
 }
@@ -59,7 +90,10 @@ func (id *Identifier) UnmarshalJSON(input []byte) error {
 	}
 	id.Origin = dec.Origin
 	id.BlockNumber = uint64(dec.BlockNumber)
-	id.LogIndex = uint64(dec.LogIndex)
+	if dec.LogIndex > math.MaxUint32 {
+		return fmt.Errorf("log index too large: %d", dec.LogIndex)
+	}
+	id.LogIndex = uint32(dec.LogIndex)
 	id.Timestamp = uint64(dec.Timestamp)
 	id.ChainID = (ChainID)(dec.ChainID)
 	return nil
@@ -73,7 +107,7 @@ func (lvl SafetyLevel) String() string {
 
 func (lvl SafetyLevel) Valid() bool {
 	switch lvl {
-	case Finalized, Safe, CrossUnsafe, Unsafe:
+	case Finalized, CrossSafe, LocalSafe, CrossUnsafe, LocalUnsafe:
 		return true
 	default:
 		return false
@@ -101,10 +135,10 @@ func (lvl *SafetyLevel) AtLeastAsSafe(min SafetyLevel) bool {
 	switch min {
 	case Invalid:
 		return true
-	case Unsafe:
+	case CrossUnsafe:
 		return *lvl != Invalid
-	case Safe:
-		return *lvl == Safe || *lvl == Finalized
+	case CrossSafe:
+		return *lvl == CrossSafe || *lvl == Finalized
 	case Finalized:
 		return *lvl == Finalized
 	default:
@@ -113,13 +147,26 @@ func (lvl *SafetyLevel) AtLeastAsSafe(min SafetyLevel) bool {
 }
 
 const (
-	CrossFinalized SafetyLevel = "cross-finalized"
-	Finalized      SafetyLevel = "finalized"
-	CrossSafe      SafetyLevel = "cross-safe"
-	Safe           SafetyLevel = "safe"
-	CrossUnsafe    SafetyLevel = "cross-unsafe"
-	Unsafe         SafetyLevel = "unsafe"
-	Invalid        SafetyLevel = "invalid"
+	// Finalized is CrossSafe, with the additional constraint that every
+	// dependency is derived only from finalized L1 input data.
+	// This matches RPC label "finalized".
+	Finalized SafetyLevel = "finalized"
+	// CrossSafe is as safe as LocalSafe, with all its dependencies
+	// also fully verified to be reproducible from L1.
+	// This matches RPC label "safe".
+	CrossSafe SafetyLevel = "safe"
+	// LocalSafe is verified to be reproducible from L1,
+	// without any verified cross-L2 dependencies.
+	// This does not have an RPC label.
+	LocalSafe SafetyLevel = "local-safe"
+	// CrossUnsafe is as safe as LocalUnsafe,
+	// but with verified cross-L2 dependencies that are at least CrossUnsafe.
+	// This does not have an RPC label.
+	CrossUnsafe SafetyLevel = "cross-unsafe"
+	// LocalUnsafe is the safety of the tip of the chain. This matches RPC label "unsafe".
+	LocalUnsafe SafetyLevel = "unsafe"
+	// Invalid is the safety of when the message or block is not matching the expected data.
+	Invalid SafetyLevel = "invalid"
 )
 
 type ChainID uint256.Int
@@ -146,4 +193,112 @@ func (id ChainID) ToUInt32() (uint32, error) {
 		return 0, fmt.Errorf("ChainID too large for uint32: %v", id)
 	}
 	return uint32(v64), nil
+}
+
+func (id *ChainID) ToBig() *big.Int {
+	return (*uint256.Int)(id).ToBig()
+}
+
+func (id ChainID) MarshalText() ([]byte, error) {
+	return []byte(id.String()), nil
+}
+
+func (id *ChainID) UnmarshalText(data []byte) error {
+	var x uint256.Int
+	err := x.UnmarshalText(data)
+	if err != nil {
+		return err
+	}
+	*id = ChainID(x)
+	return nil
+}
+
+func (id ChainID) Cmp(other ChainID) int {
+	return (*uint256.Int)(&id).Cmp((*uint256.Int)(&other))
+}
+
+type ReferenceView struct {
+	Local eth.BlockID `json:"local"`
+	Cross eth.BlockID `json:"cross"`
+}
+
+func (v ReferenceView) String() string {
+	return fmt.Sprintf("View(local: %s, cross: %s)", v.Local, v.Cross)
+}
+
+type BlockSeal struct {
+	Hash      common.Hash
+	Number    uint64
+	Timestamp uint64
+}
+
+func (s BlockSeal) String() string {
+	return fmt.Sprintf("BlockSeal(hash:%s, number:%d, time:%d)", s.Hash, s.Number, s.Timestamp)
+}
+
+func (s BlockSeal) ID() eth.BlockID {
+	return eth.BlockID{Hash: s.Hash, Number: s.Number}
+}
+
+func (s BlockSeal) MustWithParent(parent eth.BlockID) eth.BlockRef {
+	ref, err := s.WithParent(parent)
+	if err != nil {
+		panic(err)
+	}
+	return ref
+}
+
+func (s BlockSeal) WithParent(parent eth.BlockID) (eth.BlockRef, error) {
+	// prevent parent attachment if the parent is not the previous block,
+	// and the block is not the genesis block
+	if s.Number != parent.Number+1 && s.Number != 0 {
+		return eth.BlockRef{}, fmt.Errorf("invalid parent block %s to combine with %s", parent, s)
+	}
+	return eth.BlockRef{
+		Hash:       s.Hash,
+		Number:     s.Number,
+		ParentHash: parent.Hash,
+		Time:       s.Timestamp,
+	}, nil
+}
+
+func (s BlockSeal) ForceWithParent(parent eth.BlockID) eth.BlockRef {
+	return eth.BlockRef{
+		Hash:       s.Hash,
+		Number:     s.Number,
+		ParentHash: parent.Hash,
+		Time:       s.Timestamp,
+	}
+}
+
+func BlockSealFromRef(ref eth.BlockRef) BlockSeal {
+	return BlockSeal{
+		Hash:      ref.Hash,
+		Number:    ref.Number,
+		Timestamp: ref.Time,
+	}
+}
+
+// PayloadHashToLogHash converts the payload hash to the log hash
+// it is the concatenation of the log's address and the hash of the log's payload,
+// which is then hashed again. This is the hash that is stored in the log storage.
+// The logHash can then be used to traverse from the executing message
+// to the log the referenced initiating message.
+func PayloadHashToLogHash(payloadHash common.Hash, addr common.Address) common.Hash {
+	msg := make([]byte, 0, 2*common.HashLength)
+	msg = append(msg, addr.Bytes()...)
+	msg = append(msg, payloadHash.Bytes()...)
+	return crypto.Keccak256Hash(msg)
+}
+
+// LogToMessagePayload is the data that is hashed to get the payloadHash
+// it is the concatenation of the log's topics and data
+// the implementation is based on the interop messaging spec
+func LogToMessagePayload(l *ethTypes.Log) []byte {
+	msg := make([]byte, 0)
+	for _, topic := range l.Topics {
+		msg = append(msg, topic.Bytes()...)
+	}
+	msg = append(msg, l.Data...)
+	return msg
 }

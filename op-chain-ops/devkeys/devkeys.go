@@ -49,6 +49,10 @@ func ChainUserKeys(chainID *big.Int) func(index uint64) ChainUserKey {
 	}
 }
 
+type Role interface {
+	Key(chainID *big.Int) Key
+}
+
 // SuperchainOperatorRole identifies an account used in the operations of superchain contracts
 type SuperchainOperatorRole uint64
 
@@ -80,6 +84,28 @@ func (role SuperchainOperatorRole) String() string {
 	default:
 		return fmt.Sprintf("unknown-superchain-%d", uint64(role))
 	}
+}
+
+func (role SuperchainOperatorRole) Key(chainID *big.Int) Key {
+	return &SuperchainOperatorKey{
+		ChainID: chainID,
+		Role:    role,
+	}
+}
+
+func (role *SuperchainOperatorRole) UnmarshalText(data []byte) error {
+	v := string(data)
+	for i := SuperchainOperatorRole(0); i < 20; i++ {
+		if i.String() == v {
+			*role = i
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown superchain operator role %q", v)
+}
+
+func (role *SuperchainOperatorRole) MarshalText() ([]byte, error) {
+	return []byte(role.String()), nil
 }
 
 // SuperchainOperatorKey is an account specific to an OperationRole of a given OP-Stack chain.
@@ -163,11 +189,26 @@ func (role ChainOperatorRole) String() string {
 	}
 }
 
-func (role ChainOperatorRole) Key(chainID *big.Int) *ChainOperatorKey {
+func (role ChainOperatorRole) Key(chainID *big.Int) Key {
 	return &ChainOperatorKey{
 		ChainID: chainID,
 		Role:    role,
 	}
+}
+
+func (role *ChainOperatorRole) UnmarshalText(data []byte) error {
+	v := string(data)
+	for i := ChainOperatorRole(0); i < 20; i++ {
+		if i.String() == v {
+			*role = i
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown chain operator role %q", v)
+}
+
+func (role *ChainOperatorRole) MarshalText() ([]byte, error) {
+	return []byte(role.String()), nil
 }
 
 // ChainOperatorKey is an account specific to an OperationRole of a given OP-Stack chain.

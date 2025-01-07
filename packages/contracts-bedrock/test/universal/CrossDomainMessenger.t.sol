@@ -4,7 +4,6 @@ pragma solidity 0.8.15;
 // Testing utilities
 import { Test } from "forge-std/Test.sol";
 import { Bridge_Initializer } from "test/setup/Bridge_Initializer.sol";
-import { CallerCaller, Reverter } from "test/mocks/Callers.sol";
 
 // Libraries
 import { Predeploys } from "src/libraries/Predeploys.sol";
@@ -100,7 +99,7 @@ contract ExternalRelay is Test {
 
     /// @notice Helper function to get the callData for an `externalCallWithMinGas
     function getCallData() public pure returns (bytes memory) {
-        return abi.encodeWithSelector(ExternalRelay.externalCallWithMinGas.selector);
+        return abi.encodeCall(ExternalRelay.externalCallWithMinGas, ());
     }
 
     /// @notice Helper function to set the fuzzed sender
